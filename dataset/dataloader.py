@@ -11,8 +11,49 @@ import numpy as np
 import itertools
 NO_LABEL= -1
 
+class WarmUpDataset(Dataset):
+    def __init__(self, data_dir, subfolder='valid'):
+        self.mean = [0.485, 0.456, 0.406]
+        self.std = [0.229, 0.224, 0.225]
+        self.train_path = os.path.join(data_dir, "valid")
+        self.classes = []
+        for d in os.listdir(self.train_path):
+            if ".txt" not in d:
+                self.classes.append(d)
+
+        self.transform = T.Compose([T.Resize((128,128), interpolation=2),
+                            T.RandomRotation(45),
+                            T.RandomVerticalFlip(),
+                            T.RandomGrayscale(),
+                            T.RandomSizedCrop((112,112)),
+                            T.ToTensor(),
+                            T.Normalize(self.mean, self.std)])
+    
+        self.paths = []
+        self.true_idxs = []
+        for i, c in enumerate(self.classes):
+            for file in list(glob.glob(os.path.join(self.train_path, os.path.join(c, "*.*")))):
+                self.paths.append(file)
+                # self.true_labels.append(c)
+                self.true_idxs.append(i)
+        
+    def __len__(self):
+        return len(self.paths)
+
+    def __getitem__(self, idx):
+        X_path = self.paths[idx]
+        X = Image.open(X_path).convert("RGB")
+        # Y = self.paths[idx][:-1].split(os.path.sep)[-2]
+        X = self.transform(X)
+        Y = self.true_idxs[idx]
+        # Y = torch.tensor(Y, dtype=torch.long)
+        data = [X, Y]
+        return data
+
+
+
 class maskDataset(Dataset):
-    def __init__(self, data_dir, batch_size, labeled_percents=20):
+    def __init__(self, data_dir, labeled_percents=20):
         self.mean = [0.485, 0.456, 0.406]
         self.std = [0.229, 0.224, 0.225]
         self.train_path = os.path.join(data_dir, "train")
@@ -67,7 +108,7 @@ class maskDataset(Dataset):
         # Y = self.paths[idx][:-1].split(os.path.sep)[-2]
         X = self.transform(X)
         Y = self.relabeled[idx]
-        # Y = torch.tensor(Y, dtype=torch.long)
+        # Y = torch.tensor(Y, dtype=torch.long)batch_size
         data = [X, Y]
         return data
 

@@ -23,8 +23,8 @@ from torch import nn
 
 from dataset.dataloader import NO_LABEL
 
-# Problem may occur: Mixer mixes Y by indexes which may lead to appropriate axis
-
+# Problem may occur: Mixer mixes Y by indexes which may lead to INappropriate axis
+WARM_UP = 10
 BATCH_SIZE = 8
 LABELED_RATIO = 0.2
 LABELED_BATCH_SIZE = int(BATCH_SIZE*LABELED_RATIO)
@@ -45,13 +45,14 @@ Net.to(device)
 print(device)
 
 ## ----- Losses -------------------
+warm_up_criterion = nn.CrossEntropyLoss()
 criterion_cls = CategoricalCrossEntropy()
 all_cls_regu = earlyRegu(num_classes=NUM_CLASSES)
 entropy_regu = EntropyRegu()
 
 ## ----- Dataloader --------------------
 
-trainset = maskDataset(data_dir=DATA_DIR, batch_size=BATCH_SIZE, labeled_percents=LABELED_RATIO)
+trainset = maskDataset(data_dir=DATA_DIR, labeled_percents=LABELED_RATIO)
 labeled_idxs = trainset.labeled_idxs
 unlabeled_idxs = trainset.unlabeled_idxs
 batch_sampler = TwoStreamBatchSampler(unlabeled_idxs, labeled_idxs, BATCH_SIZE, LABELED_BATCH_SIZE)
@@ -59,8 +60,41 @@ data = torch.utils.data.DataLoader(trainset,
                                     batch_sampler=batch_sampler,
                                     # num_workers=NUM_WORKERS,
                                     pin_memory=True)
+# ----- Warm up for a few epochs --------
+warm_up_set = WarmUpDataset(data_dir=DATA_DIR)
+warm_up_data = torch.utils.data.DataLoader(warm_up_set,
+                                            batch_size=BATCH_SIZE,
+                                            shuffle=True)
+# ------ Validate ---------
+valid_set = WarmUpDataset(data_dir=DATA_DIR, subfolder='test')
+valid_data = torch.utils.data.DataLoader(warm_up_set,
+                                            batch_size=BATCH_SIZE,
+                                            shuffle=True)
+Net.train()
+opt = optim.SGD(Net.parameters(), lr=0.01, momentum=0.9)
+warmup_scheduler = torch.optim.lr_scheduler.MultiStepLR(opt, milestones=[6, 12], gamma=0.1)
+for epoch in range(WARM_UP):
+    running_loss = 0
+    warm_loss = 0
+    warm_acc = 0
+    start = time.time()
+    warm_total = 0
+    warm_correct = 0
+    for i,d in enumerate(warm_up_data):
+        [X, Y] = d[0].to(device), d[1].to(device)
+    
+        opt.zero_grad()
+        out = Net(X)
+        loss = warm_up_criterion(out, Y)
+        loss.backward()
+        opt.step()
+        warm_loss += loss.data*BATCH_SIZE
 
-## ----- Train --------------------
+        warm_correct += torch.sum(out.argmax(dim=1).float().eq(Y)).item()
+    print ("====== Warm up epoch {} Loss: {:.5}, acc: {:.5}% ======".format(epoch+1, warm_loss/len(warm_up_data.sampler), 100*warm_correct/len(warm_up_data.sampler)))
+
+
+## ----- Real Train --------------------
 
 Net.train()
 train_loss = 0
@@ -114,4 +148,14 @@ for epoch in range(START_EPOCH, END_EPOCH):
 
     else:
         print("model not saved as best_loss <= train_loss, current best : {}".format(best_loss))
-        # save_progress(state="FAIL    ", epoch= epoch+1, train_loss=train_loss/len(data.sampler), train_acc=100*correct/total)
+       # save_progress(state="FAIL    ", epoch= epoch+1, train_loss=train_loss/len(data.sampler), train_acc=100*correct/total)
+    
+    validate(Net, valid_data)
+
+def validate(Net, dataloader):
+    Net.valid()
+    for i, d in enumerate(valid):
+        [X, Y] = d[0].to(device), d[1].to(device)
+        out = Net(X)
+        valid_correct += torch.sum(out.argmax(dim=1).float().eq(Y)).item()
+    print ("====== Test on testset acc: {:.5}% ======".format(100*valid_correct/len(valid_data.sampler)))
