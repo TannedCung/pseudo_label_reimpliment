@@ -25,8 +25,8 @@ from dataset.dataloader import NO_LABEL
 
 # Problem may occur: Mixer mixes Y by indexes which may lead to appropriate axis
 
-BATCH_SIZE = 8
-LABELED_RATIO = 0.8
+BATCH_SIZE = 32
+LABELED_RATIO = 0.2
 LABELED_BATCH_SIZE = int(BATCH_SIZE*LABELED_RATIO)
 DATA_DIR = 'data'
 NUM_WORKERS = 2

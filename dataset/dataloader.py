@@ -46,6 +46,7 @@ class maskDataset(Dataset):
             unlabeled_limit = int((len(self.true_idxs) - ck)*labeled_percents)
             for idx in range(ck,ck+unlabeled_limit):
                 self.relabeled[idx] = NO_LABEL
+            ck = len(self.relabeled)
         # collect indexes of labels both labeled and unlabeled
         for i, l in enumerate(self.relabeled):
             if l == -1:
@@ -62,9 +63,9 @@ class maskDataset(Dataset):
     def __getitem__(self, idx):
         X_path = self.paths[idx]
         X = Image.open(X_path).convert("RGB")
-        Y = self.paths[idx][:-1].split(os.path.sep)[-2]
+        # Y = self.paths[idx][:-1].split(os.path.sep)[-2]
         X = self.transform(X)
-        Y = self.classes.index(Y)
+        Y = self.relabeled[idx]
         # Y = torch.tensor(Y, dtype=torch.long)
         data = [X, Y]
         return data
