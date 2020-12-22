@@ -3,11 +3,13 @@ import torch.nn.functional as F
 from torch import nn
 from torch.autograd import Variable
 
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
 class earlyRegu(nn.Module):
     def __init__(self, num_classes):
         super(earlyRegu, self).__init__()
         # self.pre_hc = torch.zeros(1, num_classes)
-        self.Pc = 1/num_classes*torch.ones(1, num_classes)
+        self.Pc = 1/num_classes*torch.ones(1, num_classes).to(device)
         self.init = True
         self.softmax = nn.Softmax(dim=1)
 

@@ -1,6 +1,8 @@
 import torch
 from torch import nn
 
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
 class Mixer():
     def __init__(self, alpha):
         if alpha >0 :
@@ -12,10 +14,13 @@ class Mixer():
                                 torch.tensor([self.alpha*1.0]))
 
     def mixup_data(self, X, y):
-        lamda = self.distribution.sample()
+        lamda = self.distribution.sample().to(device)
         batch_size = X.size()[0]
-        index = torch.randperm(batch_size)
-
+        index = torch.randperm(batch_size).to(device)
+        # print('index device', index.device)
+        # print('X device', X.device)
+        # print('Y device', y.device)
+        # print('lambda device', lamda.device)
         mixed_X = lamda*X + (1-lamda)*X[index, :]
         Y_p, Y_q = y, y[index]
 

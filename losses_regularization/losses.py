@@ -10,7 +10,7 @@ class CategoricalCrossEntropy(nn.Module):
     def forward(self, output, target):
         logits = self.softmax(output)
         loss = torch.sum(-target*torch.log10(logits))
-        return loss
+        return loss/target.shape[0]
 
 def onehot(labels, num_classes):
     placehoder = torch.zeros([labels.shape[0], num_classes])

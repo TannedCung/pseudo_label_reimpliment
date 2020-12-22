@@ -25,7 +25,7 @@ from dataset.dataloader import NO_LABEL
 
 # Problem may occur: Mixer mixes Y by indexes which may lead to appropriate axis
 
-BATCH_SIZE = 32
+BATCH_SIZE = 8
 LABELED_RATIO = 0.2
 LABELED_BATCH_SIZE = int(BATCH_SIZE*LABELED_RATIO)
 DATA_DIR = 'data'
@@ -42,6 +42,7 @@ MODEL_SAVE = './checkpoints/model.pth'
 Net = MobileFaceNetUltraLite(embedding_size=NUM_CLASSES)
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 Net.to(device)
+print(device)
 
 ## ----- Losses -------------------
 criterion_cls = CategoricalCrossEntropy()
@@ -69,7 +70,7 @@ running_loss = 0
 start = time.time()
 Data_Mixer = Mixer(alpha=ALPHA)
 opt = optim.SGD(Net.parameters(), lr=0.01, momentum=0.9)
-best_loss = 0.0
+best_loss = 1000.0
 sm = nn.Softmax(dim=1)
 
 for epoch in range(START_EPOCH, END_EPOCH):
@@ -77,7 +78,7 @@ for epoch in range(START_EPOCH, END_EPOCH):
     start = time.time() 
     for i,d in enumerate(data):
         [X, Y] = d[0].to(device), d[1].to(device)
-        Y_oh = onehot(Y, num_classes=NUM_CLASSES)
+        Y_oh = onehot(Y, num_classes=NUM_CLASSES).to(device)
         opt.zero_grad()
         # ------ First inference to get soft labels --------
         p_Y = Net(X)
@@ -91,7 +92,7 @@ for epoch in range(START_EPOCH, END_EPOCH):
 
         output = Net(mixed_X)
         cls_loss = Data_Mixer.mixup_loss(criterion=criterion_cls, output=output, Y_p=Y_p, Y_q=Y_q, lamda=lamda)
-        local_loss = cls_loss + ENTROPY_REGU_WEIGHT*entropy_regu(output=output) + ALL_CLS_REGU_WEIGHT*all_cls_regu(output)
+        local_loss = cls_loss + ENTROPY_REGU_WEIGHT*entropy_regu(output=output) + ALL_CLS_REGU_WEIGHT*all_cls_regu(output).to(device)
         loss = local_loss
         loss.backward()
         opt.step()
@@ -104,7 +105,7 @@ for epoch in range(START_EPOCH, END_EPOCH):
             running_loss = 0.0
     print ("====== Epoch {} Loss: {:.5}======".format(epoch+1, train_loss/len(data.sampler)))
 
-    if best_loss <= train_loss/len(data.sampler):
+    if best_loss >= train_loss/len(data.sampler):
         torch.save(Net, MODEL_SAVE)
         # torch.save(metric_fc.weight, HEAD_PTH)
         print("model saved to {}".format(MODEL_SAVE))
@@ -112,5 +113,5 @@ for epoch in range(START_EPOCH, END_EPOCH):
         # save_progress(state="SAVED   ", epoch= epoch+1, train_loss=train_loss/len(data.sampler), train_acc=best)
 
     else:
-        print("model not saved as best_loss >= train_loss, current best : {}".format(best_loss))
+        print("model not saved as best_loss <= train_loss, current best : {}".format(best_loss))
         # save_progress(state="FAIL    ", epoch= epoch+1, train_loss=train_loss/len(data.sampler), train_acc=100*correct/total)

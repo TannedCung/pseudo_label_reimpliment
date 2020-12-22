@@ -43,7 +43,7 @@ class maskDataset(Dataset):
                 self.true_labels.append(c)
                 self.true_idxs.append(i)
                 self.relabeled.append(i)
-            unlabeled_limit = int((len(self.true_idxs) - ck)*labeled_percents)
+            unlabeled_limit = int((len(self.true_idxs) - ck)*(1-labeled_percents))
             for idx in range(ck,ck+unlabeled_limit):
                 self.relabeled[idx] = NO_LABEL
             ck = len(self.relabeled)
@@ -56,6 +56,7 @@ class maskDataset(Dataset):
         # # shuffle labels both labeled and unlabeled
         # random.shuffle(self.labeled_idxs)
         # random.shuffle(self.unlabeled_idxs)
+        print('a')
         
     def __len__(self):
         return len(self.paths)
