@@ -10,7 +10,7 @@ from dataset.dataloader import *
 import torchvision
 import torchvision.transforms as transforms
 from torch.autograd import Variable
-
+from utils.Sort import *
 from dataset.dataloader import *
 from losses_regularization.mixup_on_data import *
 from losses_regularization.losses import *
@@ -24,8 +24,8 @@ from torch import nn
 from dataset.dataloader import NO_LABEL
 
 # Problem may occur: Mixer mixes Y by indexes which may lead to INappropriate axis
-WARM_UP = 10
-BATCH_SIZE = 8
+WARM_UP = 30
+BATCH_SIZE = 128
 LABELED_RATIO = 0.2
 LABELED_BATCH_SIZE = int(BATCH_SIZE*LABELED_RATIO)
 DATA_DIR = 'data'
@@ -70,6 +70,16 @@ valid_set = WarmUpDataset(data_dir=DATA_DIR, subfolder='test')
 valid_data = torch.utils.data.DataLoader(warm_up_set,
                                             batch_size=BATCH_SIZE,
                                             shuffle=True)
+def validate(Net, dataloader):
+    Net.eval()
+    valid_correct = 0
+    for i, d in enumerate(valid):
+        [X, Y] = d[0].to(device), d[1].to(device)
+        out = Net(X)
+        valid_correct += torch.sum(out.argmax(dim=1).float().eq(Y)).item()
+    print ("====== Test on testset acc: {:.5}% ======".format(100*valid_correct/len(valid_data.sampler)))
+    return 100*valid_correct/len(valid_data.sampler)
+
 Net.train()
 opt = optim.SGD(Net.parameters(), lr=0.01, momentum=0.9)
 warmup_scheduler = torch.optim.lr_scheduler.MultiStepLR(opt, milestones=[6, 12], gamma=0.1)
@@ -93,7 +103,6 @@ for epoch in range(WARM_UP):
         warm_correct += torch.sum(out.argmax(dim=1).float().eq(Y)).item()
     print ("====== Warm up epoch {} Loss: {:.5}, acc: {:.5}% ======".format(epoch+1, warm_loss/len(warm_up_data.sampler), 100*warm_correct/len(warm_up_data.sampler)))
 
-
 ## ----- Real Train --------------------
 
 Net.train()
@@ -104,10 +113,11 @@ running_loss = 0
 start = time.time()
 Data_Mixer = Mixer(alpha=ALPHA)
 opt = optim.SGD(Net.parameters(), lr=0.01, momentum=0.9)
-best_loss = 1000.0
+best = 0
 sm = nn.Softmax(dim=1)
-
+train_scheduler = torch.optim.lr_scheduler.MultiStepLR(opt, milestones=[6, 48, 96, 196, 320], gamma=0.5)
 for epoch in range(START_EPOCH, END_EPOCH):
+    Net.train()
     train_loss = 0
     start = time.time() 
     for i,d in enumerate(data):
@@ -118,16 +128,24 @@ for epoch in range(START_EPOCH, END_EPOCH):
         p_Y = Net(X)
         pseudo_Y = sm(p_Y)
         # Merge pseudo labels and Ground Truth labels
-        Y_oh = Y_oh*(Y_oh.ne(NO_LABEL)) + Y_oh.eq(NO_LABEL)*pseudo_Y
+        # Y_oh = Y_oh*(Y_oh.ne(NO_LABEL)) + Y_oh.eq(NO_LABEL)*pseudo_Y
+        X_l, Y_l, X_ul, Y_ul, _ = split_labeled_unlabeled(X, Y)
         # mixup_data
-        mixed_X, Y_p, Y_q , lamda = Data_Mixer.mixup_data(X, Y_oh)
+        mixed_X, Y_p, Y_q , lamda = Data_Mixer.mixup_data(X_l, onehot(Y_l,num_classes=NUM_CLASSES))
         # ------ Second inference means the real train --------
         opt.zero_grad()
-
-        output = Net(mixed_X)
-        cls_loss = Data_Mixer.mixup_loss(criterion=criterion_cls, output=output, Y_p=Y_p, Y_q=Y_q, lamda=lamda)
-        local_loss = cls_loss + ENTROPY_REGU_WEIGHT*entropy_regu(output=output) + ALL_CLS_REGU_WEIGHT*all_cls_regu(output).to(device)
-        loss = local_loss
+        # labeled phase
+        output_l = Net(mixed_X)
+        labeled_cls_loss = Data_Mixer.mixup_loss(criterion=criterion_cls, output=output_l, Y_p=Y_p, Y_q=Y_q, lamda=lamda)
+        labeled_loss = labeled_cls_loss + ENTROPY_REGU_WEIGHT*entropy_regu(output=output_l) + ALL_CLS_REGU_WEIGHT*all_cls_regu(output_l).to(device)
+        # unlabeled phase
+        output_ul = Net(X_ul)
+        Y_ul = 0*(Y_oh.ne(NO_LABEL)) + Y_oh.eq(NO_LABEL)*pseudo_Y
+        Y_ul = remove_zeros(Y_ul, num_dim=2)
+        unlabeled_cls_loss = criterion_cls(output_ul, Y_ul)
+        unlabeled_loss = unlabeled_cls_loss + ENTROPY_REGU_WEIGHT*entropy_regu(output=output_ul) + ALL_CLS_REGU_WEIGHT*all_cls_regu(output_ul).to(device)
+        # sum loss
+        loss = labeled_loss + unlabeled_weight(epoch=epoch)*unlabeled_loss
         loss.backward()
         opt.step()
         running_loss += loss.item()
@@ -139,23 +157,15 @@ for epoch in range(START_EPOCH, END_EPOCH):
             running_loss = 0.0
     print ("====== Epoch {} Loss: {:.5}======".format(epoch+1, train_loss/len(data.sampler)))
 
-    if best_loss >= train_loss/len(data.sampler):
+    acc = validate(Net, valid_data)
+    if best< acc:
         torch.save(Net, MODEL_SAVE)
         # torch.save(metric_fc.weight, HEAD_PTH)
         print("model saved to {}".format(MODEL_SAVE))
-        best_loss = train_loss/len(data.sampler)
+        best = acc 
         # save_progress(state="SAVED   ", epoch= epoch+1, train_loss=train_loss/len(data.sampler), train_acc=best)
 
     else:
-        print("model not saved as best_loss <= train_loss, current best : {}".format(best_loss))
+        print("model not saved as best > acc, current best : {}".format(best))
        # save_progress(state="FAIL    ", epoch= epoch+1, train_loss=train_loss/len(data.sampler), train_acc=100*correct/total)
     
-    validate(Net, valid_data)
-
-def validate(Net, dataloader):
-    Net.valid()
-    for i, d in enumerate(valid):
-        [X, Y] = d[0].to(device), d[1].to(device)
-        out = Net(X)
-        valid_correct += torch.sum(out.argmax(dim=1).float().eq(Y)).item()
-    print ("====== Test on testset acc: {:.5}% ======".format(100*valid_correct/len(valid_data.sampler)))
